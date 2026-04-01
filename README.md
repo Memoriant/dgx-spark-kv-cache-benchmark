@@ -108,10 +108,70 @@ This tradeoff may be acceptable depending on the use case:
 
 ---
 
+## TurboQuant KV Cache (turbo3/turbo4) - First SM 121 Results
+
+**Date:** April 2026
+**Build:** [Madreag/turbo3-cuda](https://github.com/Madreag/turbo3-cuda) `release/cuda-optimized` branch, commit `1766c9133` (build 8793)
+**Original TurboQuant:** [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant)
+
+We built Madreag's CUDA-optimized TurboQuant fork on the DGX Spark and ran turbo3/turbo4 vs f16 across multiple context depths. These are the **first SM 121 turbo3/turbo4 results**.
+
+### Token Generation (tg32) - t/s
+
+| Depth | f16 | turbo4 | turbo3 | turbo4 vs f16 | turbo3 vs f16 |
+|------:|----:|-------:|-------:|--------------:|--------------:|
+| 0 | 45.21 | 44.06 | 43.66 | -2.5% | -3.4% |
+| 4,096 | 43.29 | 41.58 | 41.68 | -3.9% | -3.7% |
+| 8,192 | 43.37 | 39.49 | 40.60 | -8.9% | -6.4% |
+| 16,384 | 43.29 | 36.21 | 36.54 | -16.4% | -15.6% |
+| 32,768 | 41.61 | 31.81 | 32.09 | **-23.6%** | **-22.9%** |
+
+### Prompt Processing (pp2048) - t/s
+
+| Depth | f16 | turbo4 | turbo3 | turbo4 vs f16 | turbo3 vs f16 |
+|------:|----:|-------:|-------:|--------------:|--------------:|
+| 0 | 809.55 | 805.17 | 805.06 | -0.5% | -0.6% |
+| 4,096 | 794.71 | 788.86 | 788.90 | -0.7% | -0.7% |
+| 8,192 | 780.74 | 776.05 | 776.85 | -0.6% | -0.5% |
+| 16,384 | 763.60 | 758.19 | 757.55 | -0.7% | -0.8% |
+| 32,768 | 718.57 | 711.26 | 712.34 | -1.0% | -0.9% |
+
+### Analysis
+
+TurboQuant is **consistently slower than f16** on GB10 unified memory, with degradation increasing at deeper context - up to 23.6% slower at 32K. Prompt processing is barely affected (<1%).
+
+The root cause is the same as the standard KV cache quantization findings above: the GB10's 128GB unified LPDDR5X memory (~273 GB/s) eliminates the VRAM pressure that makes KV cache compression beneficial on discrete GPUs like the RTX 5090 (~1,700 GB/s GDDR7). The dequantization compute overhead is not offset by bandwidth savings.
+
+**Recommendation:** Use f16 KV cache on DGX Spark. TurboQuant is designed for - and works great on - VRAM-constrained discrete GPUs.
+
+### Reproduction
+
+```bash
+git clone -b release/cuda-optimized https://github.com/Madreag/turbo3-cuda.git
+cd turbo3-cuda
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=121
+cmake --build build -j$(nproc)
+
+MODEL="/path/to/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+
+# Baseline
+./build/bin/llama-bench -m "$MODEL" -ctk f16 -ctv f16 \
+  -t 20 -ngl 99 -fa 1 -p 512,2048,8192 -n 32 -r 3 \
+  -d 0,4096,8192,16384,32768
+
+# TurboQuant
+./build/bin/llama-bench -m "$MODEL" -ctk turbo3 -ctv turbo3 \
+  -t 20 -ngl 99 -fa 1 -p 512,2048,8192 -n 32 -r 3 \
+  -d 0,4096,8192,16384,32768
+```
+
+---
+
 ## Raw Data
 
-- [`data/benchmark_results_v3_complete.csv`](data/benchmark_results_v3_complete.csv) — corrected v3 data
-- [`data/benchmark_results.csv`](data/benchmark_results.csv) — original v1 data (flawed, kept for reference)
+- [`data/turboquant_benchmark_results.csv`](data/turboquant_benchmark_results.csv) - TurboQuant turbo3/turbo4 vs f16 depth scaling data
+- [`data/benchmark_results_v3_complete.csv`](data/benchmark_results_v3_complete.csv) - corrected v3 data (q4_0/q8_0/f16)
+- [`data/benchmark_results.csv`](data/benchmark_results.csv) - original v1 data (flawed, kept for reference)
 
 ---
 
