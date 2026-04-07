@@ -142,7 +142,22 @@ TurboQuant is **consistently slower than f16** on GB10 unified memory, with degr
 
 The root cause is the same as the standard KV cache quantization findings above: the GB10's 128GB unified LPDDR5X memory (~273 GB/s) eliminates the VRAM pressure that makes KV cache compression beneficial on discrete GPUs like the RTX 5090 (~1,700 GB/s GDDR7). The dequantization compute overhead is not offset by bandwidth savings.
 
-**Recommendation:** Use f16 KV cache on DGX Spark. TurboQuant is designed for - and works great on - VRAM-constrained discrete GPUs.
+**Recommendation:** Use f16 KV cache on DGX Spark. TurboQuant is designed for — and works great on — VRAM-constrained discrete GPUs. See [research/TURBOQUANT-POLARQUANT-QJL-REVIEW.md](research/TURBOQUANT-POLARQUANT-QJL-REVIEW.md) for a detailed analysis of why.
+
+### Cross-Platform Context
+
+The generation throughput penalty on GB10 is explained by the bandwidth equation: KV cache quantization helps when **memory bandwidth savings > dequantization compute cost**.
+
+| Platform | Memory | Bandwidth | KV Quant Benefit |
+|----------|--------|-----------|-----------------|
+| H100 SXM | 80GB HBM3 | ~3,350 GB/s | **High** — VRAM-constrained, bandwidth-rich |
+| RTX 5090 | 32GB GDDR7 | ~1,700 GB/s | **High** — severely VRAM-constrained |
+| RTX 4090 | 24GB GDDR6X | ~1,008 GB/s | **High** — VRAM-constrained |
+| **DGX Spark GB10** | **128GB LPDDR5X** | **~273 GB/s** | **Low** — memory-abundant, bandwidth-limited |
+
+On discrete GPUs, TurboQuant's near-optimal 3-bit compression reduces memory traffic over the high-bandwidth HBM/GDDR bus, directly translating to faster attention. On DGX Spark, the 128GB unified pool means memory capacity is rarely the bottleneck, and the lower LPDDR5X bandwidth means dequantization compute dominates.
+
+For DGX Spark users needing to maximize context length, the recommended path is NVIDIA's hardware-accelerated **NVFP4** format (via TensorRT-LLM), which uses dedicated Blackwell tensor core silicon for dequantization rather than software kernels.
 
 ### Reproduction
 
@@ -164,6 +179,12 @@ MODEL="/path/to/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
   -t 20 -ngl 99 -fa 1 -p 512,2048,8192 -n 32 -r 3 \
   -d 0,4096,8192,16384,32768
 ```
+
+---
+
+## Research
+
+- [**TurboQuant, PolarQuant, and QJL Literature Review**](research/TURBOQUANT-POLARQUANT-QJL-REVIEW.md) — Deep analysis of the three Google Research papers behind TurboQuant, with cross-platform bandwidth analysis explaining why KV cache quantization behaves differently on unified memory vs discrete GPUs.
 
 ---
 
